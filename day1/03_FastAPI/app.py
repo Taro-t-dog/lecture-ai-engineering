@@ -12,9 +12,31 @@ import nest_asyncio
 from pyngrok import ngrok
 
 # --- 設定 ---
-# モデル名を設定
-MODEL_NAME = "google/gemma-2-2b-jpn-it"  # お好みのモデルに変更可能です
+# モデル名を設定（自作モデルに変更）
+MODEL_NAME = "t-dog0519/gemma-2-9b-finetune-tdog"
 print(f"モデル名を設定: {MODEL_NAME}")
+
+# グローバル変数として定義
+use_quantization = False
+quantization_config = None
+
+# 量子化設定（bitsandbytesが利用可能かチェック）
+try:
+    import bitsandbytes
+    from transformers import BitsAndBytesConfig
+    
+    # 量子化設定
+    quantization_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_compute_dtype=torch.bfloat16,
+        bnb_4bit_use_double_quant=True,
+        bnb_4bit_quant_type="nf4"
+    )
+    use_quantization = True
+    print("4ビット量子化が有効化されました")
+except ImportError:
+    # bitsandbytesがインストールされていない場合
+    print("警告: bitsandbytesパッケージがインストールされていないため、量子化は無効です")
 
 # --- モデル設定クラス ---
 class Config:
@@ -47,7 +69,7 @@ class Message(BaseModel):
 # 直接プロンプトを使用した簡略化されたリクエスト
 class SimpleGenerationRequest(BaseModel):
     prompt: str
-    max_new_tokens: Optional[int] = 512
+    max_new_tokens: Optional[int] = 256
     do_sample: Optional[bool] = True
     temperature: Optional[float] = 0.7
     top_p: Optional[float] = 0.9
@@ -62,23 +84,48 @@ model = None
 
 def load_model():
     """推論用のLLMモデルを読み込む"""
-    global model  # グローバル変数を更新するために必要
+    global model, use_quantization, quantization_config  # グローバル変数にアクセス
     try:
         device = "cuda" if torch.cuda.is_available() else "cpu"
         print(f"使用デバイス: {device}")
-        pipe = pipeline(
-            "text-generation",
-            model=config.MODEL_NAME,
-            model_kwargs={"torch_dtype": torch.bfloat16},
-            device=device
-        )
+        
+        # モデル読み込み設定
+        model_kwargs = {"torch_dtype": torch.bfloat16}
+        
+        # 量子化が利用可能な場合
+        if use_quantization:
+            print("量子化設定を使用してモデルを読み込みます")
+            model_kwargs["quantization_config"] = quantization_config
+            model_kwargs["device_map"] = "auto"
+            
+            # 量子化使用時はdeviceパラメータなしでパイプラインを作成
+            pipe = pipeline(
+                "text-generation",
+                model=config.MODEL_NAME,
+                model_kwargs=model_kwargs
+                # deviceパラメータは指定しない
+            )
+        else:
+            print("通常の設定でモデルを読み込みます")
+            # 通常の読み込み（量子化なし）
+            pipe = pipeline(
+                "text-generation",
+                model=config.MODEL_NAME,
+                model_kwargs=model_kwargs,
+                device=device  # 量子化なしの場合はdeviceを指定可能
+            )
+        
         print(f"モデル '{config.MODEL_NAME}' の読み込みに成功しました")
-        model = pipe  # グローバル変数を更新
+        model = pipe
+        try:
+          print(f"モデルのデバイスマッピング: {model.model.device}")
+        except Exception as e:
+          print(f"デバイスマッピングの確認中にエラー: {e}")
         return pipe
     except Exception as e:
         error_msg = f"モデル '{config.MODEL_NAME}' の読み込みに失敗: {e}"
         print(error_msg)
-        traceback.print_exc()  # 詳細なエラー情報を出力
+        traceback.print_exc()
         return None
 
 def extract_assistant_response(outputs, user_prompt):
@@ -179,6 +226,11 @@ async def generate_simple(request: SimpleGenerationRequest):
             do_sample=request.do_sample,
             temperature=request.temperature,
             top_p=request.top_p,
+            use_cache=True,
+            num_beams=1,
+            pad_token_id=model.tokenizer.eos_token_id,
+            repetition_penalty=1.0
+
         )
         print("モデル推論が完了しました。")
 
