@@ -174,6 +174,7 @@ def test_model_reproducibility(sample_data, preprocessor):
         predictions1, predictions2
     ), "モデルの予測結果に再現性がありません"
 
+
 def test_inference_time(train_model):
     """モデルの推論時間を検証 (GitHub Actions用)"""
     model, X_test, _ = train_model
@@ -196,7 +197,7 @@ def test_model_regression(train_model):
     # 現在のモデルの性能計算
     y_pred = model.predict(X_test)
     current_accuracy = accuracy_score(y_test, y_pred)
-    
+
     start_time = time.time()
     model.predict(X_test[:10])
     end_time = time.time()
@@ -206,18 +207,20 @@ def test_model_regression(train_model):
     if os.path.exists(BASELINE_METRICS_PATH):
         with open(BASELINE_METRICS_PATH, "r") as f:
             baseline_metrics = json.load(f)
-        
+
         baseline_accuracy = baseline_metrics["accuracy"]
         baseline_inference_time = baseline_metrics["inference_time_per_sample"]
-        
+
         # 性能劣化がないことを確認（精度は5%以内の低下まで許容）
         accuracy_threshold = baseline_accuracy * 0.95
-        assert current_accuracy >= accuracy_threshold, \
-            f"精度が劣化しています: 現在={current_accuracy}, ベースライン={baseline_accuracy}"
-        
+        assert (
+            current_accuracy >= accuracy_threshold
+        ), f"精度が劣化しています: 現在={current_accuracy}, ベースライン={baseline_accuracy}"
+
         # 推論時間が2倍以上悪化していないことを確認
         time_threshold = baseline_inference_time * 2.0
-        assert current_inference_time <= time_threshold, \
-            f"推論時間が悪化しています: 現在={current_inference_time}, ベースライン={baseline_inference_time}"
+        assert (
+            current_inference_time <= time_threshold
+        ), f"推論時間が悪化しています: 現在={current_inference_time}, ベースライン={baseline_inference_time}"
     else:
         pytest.skip("ベースライン性能ファイルが存在しないためスキップします")
