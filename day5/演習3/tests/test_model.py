@@ -4,6 +4,7 @@ import pandas as pd
 import numpy as np
 import pickle
 import time
+import json
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
@@ -16,6 +17,7 @@ from sklearn.pipeline import Pipeline
 DATA_PATH = os.path.join(os.path.dirname(__file__), "../data/Titanic.csv")
 MODEL_DIR = os.path.join(os.path.dirname(__file__), "../models")
 MODEL_PATH = os.path.join(MODEL_DIR, "titanic_model.pkl")
+BASELINE_METRICS_PATH = os.path.join(MODEL_DIR, "baseline_metrics.json")
 
 
 @pytest.fixture
@@ -171,3 +173,51 @@ def test_model_reproducibility(sample_data, preprocessor):
     assert np.array_equal(
         predictions1, predictions2
     ), "モデルの予測結果に再現性がありません"
+
+def test_inference_time(train_model):
+    """モデルの推論時間を検証 (GitHub Actions用)"""
+    model, X_test, _ = train_model
+
+    # 推論時間の計測
+    start_time = time.time()
+    model.predict(X_test)
+    end_time = time.time()
+
+    inference_time = end_time - start_time
+
+    # 推論時間が1秒未満であることを確認
+    assert inference_time < 1.0, f"推論時間が長すぎます: {inference_time}秒"
+
+
+def test_model_regression(train_model):
+    """過去バージョンとの比較テスト"""
+    model, X_test, y_test = train_model
+
+    # 現在のモデルの性能計算
+    y_pred = model.predict(X_test)
+    current_accuracy = accuracy_score(y_test, y_pred)
+    
+    start_time = time.time()
+    model.predict(X_test[:10])
+    end_time = time.time()
+    current_inference_time = (end_time - start_time) / 10
+
+    # ベースライン性能の読み込み
+    if os.path.exists(BASELINE_METRICS_PATH):
+        with open(BASELINE_METRICS_PATH, "r") as f:
+            baseline_metrics = json.load(f)
+        
+        baseline_accuracy = baseline_metrics["accuracy"]
+        baseline_inference_time = baseline_metrics["inference_time_per_sample"]
+        
+        # 性能劣化がないことを確認（精度は5%以内の低下まで許容）
+        accuracy_threshold = baseline_accuracy * 0.95
+        assert current_accuracy >= accuracy_threshold, \
+            f"精度が劣化しています: 現在={current_accuracy}, ベースライン={baseline_accuracy}"
+        
+        # 推論時間が2倍以上悪化していないことを確認
+        time_threshold = baseline_inference_time * 2.0
+        assert current_inference_time <= time_threshold, \
+            f"推論時間が悪化しています: 現在={current_inference_time}, ベースライン={baseline_inference_time}"
+    else:
+        pytest.skip("ベースライン性能ファイルが存在しないためスキップします")
